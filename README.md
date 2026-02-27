@@ -143,12 +143,9 @@ Chat pipeline:
 Sarvam Bot Telegram/
 ├── .github/workflows/
 │   ├── ci.yml
-│   ├── cd-build-push.yml
-│   ├── cd-deploy-oci.yml
-│   └── rollback-oci.yml
+│   └── cd-deploy-ssh.yml
 ├── deploy/
 │   ├── remote-deploy.sh
-│   ├── remote-rollback.sh
 │   └── OCI_CICD_SETUP.md
 ├── Dockerfile
 ├── docker-compose.prod.yml
@@ -164,8 +161,8 @@ Sarvam Bot Telegram/
 CI/CD is configured for:
 
 1. Build Docker image
-2. Push to OCIR
-3. Deploy to your existing OCI VM via SSH
+2. Upload image + deploy files to your existing OCI VM via SSH
+3. Load image and run container on the VM
 
 See setup guide:
 
@@ -173,16 +170,11 @@ See setup guide:
 
 Required GitHub **Variables**:
 
-- `OCIR_REGISTRY`
-- `OCIR_NAMESPACE`
-- `IMAGE_NAME`
 - `DEPLOY_PATH`
 - `SSH_PORT`
 
 Required GitHub **Secrets**:
 
-- `OCIR_USERNAME`
-- `OCIR_AUTH_TOKEN`
 - `OCI_VM_HOST`
 - `OCI_VM_USER`
 - `OCI_VM_SSH_PRIVATE_KEY`

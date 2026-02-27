@@ -1,0 +1,69 @@
+name: CD - Deploy to OCI VM (SSH Deploy)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Git ref to deploy (branch/tag/commit). Defaults to main."
+        required: false
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/sarvam-telegram-bot' }}
+      SSH_PORT: ${{ vars.SSH_PORT || 22 }}
+      IMAGE_REF: sarvam-telegram-bot:${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.git_ref || github.ref_name }}
+
+      - name: Build deploy image
+        run: |
+          docker build -t "${{ env.IMAGE_REF }}" .
+
+      - name: Export image tarball
+        run: |
+          docker save "${{ env.IMAGE_REF }}" | gzip > sarvam-telegram-bot-image.tar.gz
+
+      - name: Ensure remote deploy path exists
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.OCI_VM_HOST }}
+          username: ${{ secrets.OCI_VM_USER }}
+          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          script: |
+            mkdir -p "${{ env.DEPLOY_PATH }}/deploy"
+
+      - name: Upload app files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.OCI_VM_HOST }}
+          username: ${{ secrets.OCI_VM_USER }}
+          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          source: "docker-compose.prod.yml,deploy/remote-deploy.sh,sarvam-telegram-bot-image.tar.gz"
+          target: ${{ env.DEPLOY_PATH }}
+          overwrite: true
+
+      - name: Load image and deploy on VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.OCI_VM_HOST }}
+          username: ${{ secrets.OCI_VM_USER }}
+          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          script: |
+            chmod +x "${{ env.DEPLOY_PATH }}/deploy/remote-deploy.sh"
+            gzip -dc "${{ env.DEPLOY_PATH }}/sarvam-telegram-bot-image.tar.gz" | docker load
+            DEPLOY_PATH="${{ env.DEPLOY_PATH }}" IMAGE_REF="${{ env.IMAGE_REF }}" SKIP_PULL="true" bash "${{ env.DEPLOY_PATH }}/deploy/remote-deploy.sh"

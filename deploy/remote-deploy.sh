@@ -6,11 +6,6 @@ if [[ -z "${DEPLOY_PATH:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "${IMAGE_REF:-}" ]]; then
-  echo "IMAGE_REF is required"
-  exit 1
-fi
-
 mkdir -p "$DEPLOY_PATH"
 cd "$DEPLOY_PATH"
 
@@ -34,9 +29,23 @@ if [[ ! -f "docker-compose.prod.yml" ]]; then
   exit 1
 fi
 
-echo "Deploying image: $IMAGE_REF"
-export IMAGE_REF
-docker compose -f docker-compose.prod.yml pull
+if [[ "${BUILD_LOCAL:-false}" == "true" ]]; then
+  LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-sarvam-telegram-bot:local}"
+  echo "Building local image: ${LOCAL_IMAGE_TAG}"
+  docker build -t "${LOCAL_IMAGE_TAG}" .
+  export IMAGE_REF="${LOCAL_IMAGE_TAG}"
+else
+  if [[ -z "${IMAGE_REF:-}" ]]; then
+    echo "IMAGE_REF is required when BUILD_LOCAL is not true"
+    exit 1
+  fi
+  echo "Deploying image: ${IMAGE_REF}"
+  export IMAGE_REF
+  if [[ "${SKIP_PULL:-false}" != "true" ]]; then
+    docker compose -f docker-compose.prod.yml pull
+  fi
+fi
+
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 docker image prune -f
 docker compose -f docker-compose.prod.yml ps

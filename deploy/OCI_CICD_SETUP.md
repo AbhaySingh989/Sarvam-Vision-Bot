@@ -1,6 +1,6 @@
 # OCI CI/CD Setup (Existing VM)
 
-This project deploys to your existing OCI instance using GitHub Actions + Docker + OCIR.
+This project deploys to your existing OCI instance using GitHub Actions + Docker + SSH (no OCIR required).
 
 ## 1) One-time setup on OCI VM
 
@@ -43,9 +43,6 @@ chmod 600 /opt/sarvam-telegram-bot/.env
 
 Add these in GitHub -> Settings -> Secrets and variables -> Actions -> Variables:
 
-- `OCIR_REGISTRY` (example: `iad.ocir.io`)
-- `OCIR_NAMESPACE` (your tenancy namespace)
-- `IMAGE_NAME` (example: `sarvam-telegram-bot`)
 - `DEPLOY_PATH` (example: `/opt/sarvam-telegram-bot`)
 - `SSH_PORT` (example: `22`)
 
@@ -53,8 +50,6 @@ Add these in GitHub -> Settings -> Secrets and variables -> Actions -> Variables
 
 Add these in GitHub -> Settings -> Secrets and variables -> Actions -> Secrets:
 
-- `OCIR_USERNAME` (format: `<namespace>/<oracle_username>`)
-- `OCIR_AUTH_TOKEN` (Oracle auth token, not account password)
 - `OCI_VM_HOST` (public IP or DNS)
 - `OCI_VM_USER` (example: `ubuntu` or `opc`)
 - `OCI_VM_SSH_PRIVATE_KEY` (full PEM/private key contents)
@@ -62,15 +57,11 @@ Add these in GitHub -> Settings -> Secrets and variables -> Actions -> Secrets:
 ## 4) Workflow behavior
 
 - `CI`: validates Python + Docker build on PRs and non-main pushes.
-- `CD - Build and Push Image to OCIR`: builds image and pushes tags:
-  - `latest`
-  - `sha-<7-char-commit>`
-- `CD - Deploy to OCI VM`:
-  - auto-runs after successful image build/push
-  - logs into OCIR on VM
-  - pulls and restarts container via `docker compose`
-- `Rollback - OCI VM`:
-  - manual rollback to a previous image tag.
+- `CD - Deploy to OCI VM (SSH Deploy)`:
+  - runs on push to `main` (or manual dispatch)
+  - builds Docker image in GitHub Actions
+  - uploads image tarball + deploy files to VM over SSH
+  - loads image on VM and restarts bot container using `docker compose`
 
 ## 5) First deploy
 
@@ -78,15 +69,11 @@ Add these in GitHub -> Settings -> Secrets and variables -> Actions -> Secrets:
 2. Configure all Variables and Secrets above.
 3. Push to `main` branch.
 4. Watch actions:
-   - Build/Push workflow
-   - Deploy workflow
+   - CI
+   - CD - Deploy to OCI VM (SSH Deploy)
 
-## 6) Manual rollback
+## 6) Manual redeploy to an older commit/tag
 
-Run workflow: `Rollback - OCI VM` and pass:
+Run workflow: `CD - Deploy to OCI VM (SSH Deploy)` using **Run workflow** and set:
 
-- `image_tag=sha-abcdef1`
-
-or
-
-- `image_tag=latest`
+- `git_ref=<branch|tag|commit>`
