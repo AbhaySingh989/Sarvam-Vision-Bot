@@ -141,12 +141,51 @@ Chat pipeline:
 
 ```text
 Sarvam Bot Telegram/
+├── .github/workflows/
+│   ├── ci.yml
+│   ├── cd-build-push.yml
+│   ├── cd-deploy-oci.yml
+│   └── rollback-oci.yml
+├── deploy/
+│   ├── remote-deploy.sh
+│   ├── remote-rollback.sh
+│   └── OCI_CICD_SETUP.md
+├── Dockerfile
+├── docker-compose.prod.yml
 ├── bot.py
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 └── README.md
 ```
+
+## 🚢 OCI Deployment (Existing VM)
+
+CI/CD is configured for:
+
+1. Build Docker image
+2. Push to OCIR
+3. Deploy to your existing OCI VM via SSH
+
+See setup guide:
+
+- `deploy/OCI_CICD_SETUP.md`
+
+Required GitHub **Variables**:
+
+- `OCIR_REGISTRY`
+- `OCIR_NAMESPACE`
+- `IMAGE_NAME`
+- `DEPLOY_PATH`
+- `SSH_PORT`
+
+Required GitHub **Secrets**:
+
+- `OCIR_USERNAME`
+- `OCIR_AUTH_TOKEN`
+- `OCI_VM_HOST`
+- `OCI_VM_USER`
+- `OCI_VM_SSH_PRIVATE_KEY`
 
 ## 🐛 Troubleshooting
 

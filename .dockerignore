@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.log
+.env
+.env.*
+!.env.example
+plan.md
+OCI_Deployment_Guide.md
+README.md

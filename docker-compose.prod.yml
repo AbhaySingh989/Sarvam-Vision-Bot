@@ -1,0 +1,8 @@
+services:
+  sarvam-telegram-bot:
+    image: ${IMAGE_REF}
+    container_name: sarvam-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["python", "main.py"]
