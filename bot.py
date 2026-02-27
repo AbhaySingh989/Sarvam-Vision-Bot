@@ -17,7 +17,7 @@ import httpx
 from dotenv import load_dotenv
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -642,7 +642,6 @@ def build_upload_candidates(
     )
 
     return [
-        (image_name, file_bytes, direct_content_type, "direct-image"),
         (zip_name, zip_bytes, zip_content_type, "zipped-image"),
     ]
 
@@ -1246,6 +1245,21 @@ async def send_ocr_output(reply_target: Any, document_name: str, text: str) -> N
         )
 
 
+async def safe_edit_status_message(
+    status_message: Any,
+    fallback_reply_target: Any,
+    text: str,
+    reply_markup: Any = None,
+) -> None:
+    try:
+        await status_message.edit_text(text, reply_markup=reply_markup)
+    except (TimedOut, NetworkError):
+        await fallback_reply_target.reply_text(text, reply_markup=reply_markup)
+    except BadRequest:
+        # Message may already have same content or be uneditable.
+        pass
+
+
 def get_session_for_chat(
     sessions: dict[int, ChatSession],
     chat_id: int,
@@ -1366,10 +1380,11 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if text == last_status["text"]:
                 return
             last_status["text"] = text
-            try:
-                await status_message.edit_text(text)
-            except BadRequest:
-                pass
+            await safe_edit_status_message(
+                status_message=status_message,
+                fallback_reply_target=message,
+                text=text,
+            )
 
         job_id, extracted_text = await vision_client.extract_text(
             file_name=file_name,
@@ -1394,13 +1409,19 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             updated_at=now_utc_timestamp(),
         )
 
-        await status_message.edit_text(
-            f"✅ Document ready: {file_name}\n🆔 Job ID: {job_id}\nChoose an action:",
+        await safe_edit_status_message(
+            status_message=status_message,
+            fallback_reply_target=message,
+            text=f"✅ Document ready: {file_name}\n🆔 Job ID: {job_id}\nChoose an action:",
             reply_markup=get_action_keyboard(),
         )
     except Exception as exc:
         logging.exception("Document processing failed")
-        await status_message.edit_text(f"Processing failed: {exc}")
+        await safe_edit_status_message(
+            status_message=status_message,
+            fallback_reply_target=message,
+            text=f"❌ Processing failed: {exc}",
+        )
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1540,6 +1561,10 @@ async def post_init_handler(application: Application) -> None:
     await application.bot.set_my_commands(commands)
 
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logging.exception("Unhandled update error", exc_info=context.error)
+
+
 def build_application(config: BotConfig) -> Application:
     application = (
         Application.builder()
@@ -1569,6 +1594,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CallbackQueryHandler(callback_handler, pattern=r"^feature:"))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, document_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    application.add_error_handler(global_error_handler)
     return application
 
 

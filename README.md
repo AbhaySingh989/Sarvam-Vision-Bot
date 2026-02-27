@@ -99,6 +99,12 @@ LOG_LEVEL=INFO
 python bot.py
 ```
 
+You can also run:
+
+```bash
+python main.py
+```
+
 ### In Telegram
 
 1. Send `/start`
