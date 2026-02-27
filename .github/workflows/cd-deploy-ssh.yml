@@ -35,35 +35,45 @@ jobs:
         run: |
           docker save "${{ env.IMAGE_REF }}" | gzip > sarvam-telegram-bot-image.tar.gz
 
+      - name: Prepare SSH key
+        env:
+          SSH_KEY_RAW: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
+          SSH_KEY_B64: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY_B64 }}
+          OCI_VM_HOST: ${{ secrets.OCI_VM_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          if [[ -n "${SSH_KEY_B64}" ]]; then
+            echo "${SSH_KEY_B64}" | base64 -d > "$HOME/.ssh/oci_vm_key"
+          elif [[ -n "${SSH_KEY_RAW}" ]]; then
+            printf '%s' "${SSH_KEY_RAW}" | sed 's/\\n/\n/g' > "$HOME/.ssh/oci_vm_key"
+          else
+            echo "Missing SSH key secret. Set OCI_VM_SSH_PRIVATE_KEY or OCI_VM_SSH_PRIVATE_KEY_B64."
+            exit 1
+          fi
+          tr -d '\r' < "$HOME/.ssh/oci_vm_key" > "$HOME/.ssh/oci_vm_key.tmp" && mv "$HOME/.ssh/oci_vm_key.tmp" "$HOME/.ssh/oci_vm_key"
+          chmod 600 "$HOME/.ssh/oci_vm_key"
+          ssh-keyscan -p "${SSH_PORT}" "${OCI_VM_HOST}" >> "$HOME/.ssh/known_hosts"
+
       - name: Ensure remote deploy path exists
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.OCI_VM_HOST }}
-          username: ${{ secrets.OCI_VM_USER }}
-          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          script: |
-            mkdir -p "${{ env.DEPLOY_PATH }}/deploy"
+        env:
+          OCI_VM_HOST: ${{ secrets.OCI_VM_HOST }}
+          OCI_VM_USER: ${{ secrets.OCI_VM_USER }}
+        run: |
+          ssh -i "$HOME/.ssh/oci_vm_key" -p "${SSH_PORT}" "${OCI_VM_USER}@${OCI_VM_HOST}" "mkdir -p '${DEPLOY_PATH}/deploy'"
 
       - name: Upload app files to VM
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.OCI_VM_HOST }}
-          username: ${{ secrets.OCI_VM_USER }}
-          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          source: "docker-compose.prod.yml,deploy/remote-deploy.sh,sarvam-telegram-bot-image.tar.gz"
-          target: ${{ env.DEPLOY_PATH }}
-          overwrite: true
+        env:
+          OCI_VM_HOST: ${{ secrets.OCI_VM_HOST }}
+          OCI_VM_USER: ${{ secrets.OCI_VM_USER }}
+        run: |
+          scp -i "$HOME/.ssh/oci_vm_key" -P "${SSH_PORT}" docker-compose.prod.yml "${OCI_VM_USER}@${OCI_VM_HOST}:${DEPLOY_PATH}/docker-compose.prod.yml"
+          scp -i "$HOME/.ssh/oci_vm_key" -P "${SSH_PORT}" deploy/remote-deploy.sh "${OCI_VM_USER}@${OCI_VM_HOST}:${DEPLOY_PATH}/deploy/remote-deploy.sh"
+          scp -i "$HOME/.ssh/oci_vm_key" -P "${SSH_PORT}" sarvam-telegram-bot-image.tar.gz "${OCI_VM_USER}@${OCI_VM_HOST}:${DEPLOY_PATH}/sarvam-telegram-bot-image.tar.gz"
 
       - name: Load image and deploy on VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.OCI_VM_HOST }}
-          username: ${{ secrets.OCI_VM_USER }}
-          key: ${{ secrets.OCI_VM_SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          script: |
-            chmod +x "${{ env.DEPLOY_PATH }}/deploy/remote-deploy.sh"
-            gzip -dc "${{ env.DEPLOY_PATH }}/sarvam-telegram-bot-image.tar.gz" | docker load
-            DEPLOY_PATH="${{ env.DEPLOY_PATH }}" IMAGE_REF="${{ env.IMAGE_REF }}" SKIP_PULL="true" bash "${{ env.DEPLOY_PATH }}/deploy/remote-deploy.sh"
+        env:
+          OCI_VM_HOST: ${{ secrets.OCI_VM_HOST }}
+          OCI_VM_USER: ${{ secrets.OCI_VM_USER }}
+        run: |
+          ssh -i "$HOME/.ssh/oci_vm_key" -p "${SSH_PORT}" "${OCI_VM_USER}@${OCI_VM_HOST}" "chmod +x '${DEPLOY_PATH}/deploy/remote-deploy.sh' && gzip -dc '${DEPLOY_PATH}/sarvam-telegram-bot-image.tar.gz' | docker load && DEPLOY_PATH='${DEPLOY_PATH}' IMAGE_REF='${IMAGE_REF}' SKIP_PULL='true' bash '${DEPLOY_PATH}/deploy/remote-deploy.sh'"
