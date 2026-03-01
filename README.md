@@ -212,3 +212,29 @@ Required GitHub **Secrets**:
 ---
 
 **Built for fast team demos of Sarvam document intelligence in Telegram.**
+
+## V2 Architecture
+
+The monolithic `bot.py` has been refactored into a modular architecture:
+- `bot/config.py`: Configuration model
+- `bot/state.py`: Multi-step state definitions
+- `bot/clients/`: API client abstractions for Sarvam Vision and Chat
+- `bot/engines/`: Document layout parsers and logic
+- `bot/contracts/`: Strict Pydantic models for structured output
+- `bot/workflows/`: State transition and processing flows (Extraction, Comparison, Entity)
+- `bot/export/`: XLSX generation logic via openpyxl
+- `bot/router.py`: Handles Telegram input routing
+- `bot/main.py`: Entrypoint and wire-up
+
+## Run Instructions
+
+```bash
+# Install new dependencies (openpyxl, pydantic)
+pip install -r requirements.txt
+
+# Run main bot
+python main.py
+
+# Run tests
+PYTHONPATH=. pytest tests/
+```
