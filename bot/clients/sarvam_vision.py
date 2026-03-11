@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import time
@@ -16,6 +17,7 @@ VISION_RETRY_DEFAULT_SECONDS = 65
 VISION_RETRY_MAX_SECONDS = 180
 VISION_STATUS_REPEAT_UPDATE_SECONDS = 20
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+TERMINAL_STATES = {"Completed", "PartiallyCompleted", "Failed", "Cancelled", "Canceled"}
 
 def is_image_input(file_name: str, content_type: str) -> bool:
     extension = Path(file_name).suffix.lower()
@@ -84,6 +86,8 @@ def pick_url_entry(url_payload: Any, preferred_key: str | None) -> Any:
     if isinstance(url_payload, list) and url_payload:
         return url_payload[0]
     if isinstance(url_payload, dict):
+        if looks_like_presigned_entry(url_payload):
+            return url_payload
         if preferred_key and preferred_key in url_payload:
             return url_payload[preferred_key]
         if preferred_key:
@@ -105,17 +109,29 @@ def parse_presigned_entry(
         raise RuntimeError(f"Unsupported presigned entry format: {entry}")
     url = (
         entry.get("url")
+        or entry.get("file_url")
         or entry.get("upload_url")
         or entry.get("download_url")
         or entry.get("presigned_url")
         or entry.get("signed_url")
     )
     if not url:
-        raise RuntimeError(f"Missing url field in presigned entry: {entry}")
-    method = (entry.get("method") or default_method).upper()
-    headers = entry.get("headers") or {}
-    fields = entry.get("fields")
-    return url, method, headers, fields
+        for value in entry.values():
+            if isinstance(value, str) and value.startswith("http"):
+                url = value
+                break
+    if not url:
+        raise RuntimeError(f"Missing URL in presigned entry: {entry}")
+    method = str(entry.get("method") or entry.get("http_method") or default_method).upper()
+    headers = entry.get("headers") or entry.get("request_headers") or {}
+    fields = entry.get("fields") or entry.get("form_fields") or entry.get("formData")
+    if not isinstance(headers, dict):
+        headers = {}
+    if fields is not None and not isinstance(fields, dict):
+        fields = None
+    normalized_headers = normalize_header_keys(headers)
+    normalized_fields = {str(key): str(value) for key, value in fields.items()} if fields else None
+    return str(url), method, normalized_headers, normalized_fields
 
 class SarvamVisionClient:
     def __init__(self, api_key: str, base_url: str, timeout_seconds: int = 60) -> None:
@@ -535,3 +551,206 @@ class SarvamVisionClient:
             details.append(f"No structured error details. status_payload={payload_preview}")
 
         return f"Vision job failed. {' | '.join(details)}"
+
+
+def looks_like_presigned_entry(payload: dict[str, Any]) -> bool:
+    url_keys = {
+        "url",
+        "file_url",
+        "upload_url",
+        "download_url",
+        "presigned_url",
+        "signed_url",
+    }
+    return any(key in payload for key in url_keys)
+
+
+def normalize_header_keys(headers: dict[str, Any]) -> dict[str, str]:
+    return {str(key).lower(): str(value) for key, value in headers.items()}
+
+
+def extract_page_progress(status_payload: dict[str, Any]) -> tuple[int, int]:
+    details = status_payload.get("job_details")
+    if not isinstance(details, list) or not details:
+        return 0, 0
+
+    first = details[0]
+    if not isinstance(first, dict):
+        return 0, 0
+
+    processed = int(first.get("pages_processed") or 0)
+    total = int(first.get("total_pages") or 0)
+    return processed, total
+
+
+def extract_text_from_output_zip(zip_bytes: bytes) -> str:
+    try:
+        with ZipFile(BytesIO(zip_bytes), mode="r") as archive:
+            names = sorted(name for name in archive.namelist() if not name.endswith("/"))
+            names = filter_output_files(names)
+            if not names:
+                raise RuntimeError("Output ZIP is empty.")
+
+            sections: list[str] = []
+            for name in names:
+                raw = archive.read(name)
+                extension = Path(name).suffix.lower()
+                extracted = extract_text_from_output_file(extension, raw)
+                if not extracted:
+                    continue
+
+                cleaned = normalize_text(extracted)
+                if not cleaned:
+                    continue
+
+                sections.append(cleaned)
+
+            if not sections:
+                raise RuntimeError("Could not parse text from output ZIP.")
+
+            merged = "\n\n".join(sections).strip()
+            cleaned_output = clean_extracted_ocr_text(merged)
+            if not cleaned_output:
+                raise RuntimeError("OCR output only contained metadata/artifacts after cleanup.")
+            return cleaned_output
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse OCR output ZIP: {exc}") from exc
+
+
+def filter_output_files(names: list[str]) -> list[str]:
+    has_non_json_text = any(
+        Path(name).suffix.lower() in {".md", ".markdown", ".txt", ".html", ".htm"}
+        for name in names
+    )
+    if has_non_json_text:
+        names = [name for name in names if Path(name).suffix.lower() != ".json"]
+    return names
+
+
+def clean_extracted_ocr_text(text: str) -> str:
+    cleaned = re.sub(r"!\[[^\]]*]\(data:image/[^)]+\)", "", text, flags=re.IGNORECASE)
+
+    filtered_lines: list[str] = []
+    for line in cleaned.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            filtered_lines.append("")
+            continue
+
+        if re.fullmatch(r"\[[^\]]+\.(md|markdown|html|htm|json|txt)\]", stripped, re.IGNORECASE):
+            continue
+
+        lower = stripped.lower()
+        if lower.startswith("the image displays "):
+            continue
+        if lower.startswith("*the image displays ") and lower.endswith("*"):
+            continue
+        if lower.startswith("*a four-pointed star") and lower.endswith("*"):
+            continue
+
+        filtered_lines.append(line)
+
+    return normalize_text("\n".join(filtered_lines))
+
+
+def extract_text_from_output_file(extension: str, file_bytes: bytes) -> str:
+    decoded = file_bytes.decode("utf-8", errors="replace")
+
+    if extension in {".md", ".markdown", ".txt"}:
+        return decoded
+
+    if extension in {".html", ".htm"}:
+        return strip_html(decoded)
+
+    if extension == ".json":
+        try:
+            payload = json.loads(decoded)
+        except Exception:
+            return decoded
+        return extract_text_from_json_payload(payload)
+
+    return decoded
+
+
+def extract_text_from_json_payload(payload: Any) -> str:
+    lines: list[str] = []
+    text_like_keys = (
+        "text",
+        "content",
+        "markdown",
+        "md",
+        "paragraph",
+        "line",
+        "value",
+        "title",
+        "header",
+        "footer",
+        "cell",
+    )
+    ignored_keys = {"job_id", "file_name", "error_message", "error_code"}
+
+    def walk(node: Any, parent_key: str = "") -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_lower = str(key).lower()
+                if isinstance(value, str):
+                    if key_lower not in ignored_keys and (
+                        key_lower in text_like_keys
+                        or "text" in key_lower
+                        or "content" in key_lower
+                        or "markdown" in key_lower
+                    ):
+                        cleaned = value.strip()
+                        if cleaned:
+                            lines.append(cleaned)
+                else:
+                    walk(value, key_lower)
+            return
+
+        if isinstance(node, list):
+            for item in node:
+                walk(item, parent_key)
+            return
+
+        if isinstance(node, str):
+            if parent_key and (
+                parent_key in text_like_keys
+                or "text" in parent_key
+                or "content" in parent_key
+                or "markdown" in parent_key
+            ):
+                cleaned = node.strip()
+                if cleaned:
+                    lines.append(cleaned)
+
+    walk(payload)
+    deduped = dedupe_preserve_order(lines)
+    if deduped:
+        return "\n".join(deduped)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def strip_html(source: str) -> str:
+    without_scripts = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", source)
+    without_tags = re.sub(r"(?s)<[^>]+>", " ", without_scripts)
+    unescaped = html.unescape(without_tags)
+    return normalize_text(unescaped)
+
+
+def normalize_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    normalized = re.sub(r"[ \t]{2,}", " ", normalized)
+    return normalized.strip()
