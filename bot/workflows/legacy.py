@@ -6,9 +6,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.config import BotConfig
 from bot.state import ChatSession
-from bot.clients.sarvam_chat import SarvamChatClient, MAX_CHAT_ATTEMPTS, CHAT_CONTEXT_BACKOFF_FACTOR
+from bot.clients.sarvam_chat import SarvamChatClient
 
 MIN_CHAT_CONTEXT_CHAR_LIMIT = 1200
+MAX_CHAT_ATTEMPTS = 4
+CHAT_CONTEXT_BACKOFF_FACTOR = 0.6
 FEATURE_OCR = "feature:ocr"
 FEATURE_TLDR = "feature:tldr"
 FEATURE_KEY_POINTS = "feature:key_points"

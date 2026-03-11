@@ -96,13 +96,13 @@ LOG_LEVEL=INFO
 ### Start the Bot
 
 ```bash
-python bot.py
+python main.py
 ```
 
-You can also run:
+Direct package entrypoint:
 
 ```bash
-python main.py
+python -m bot.main
 ```
 
 ### In Telegram
@@ -149,7 +149,8 @@ Sarvam Bot Telegram/
 │   └── OCI_CICD_SETUP.md
 ├── Dockerfile
 ├── docker-compose.prod.yml
-├── bot.py
+├── main.py
+├── bot/
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
